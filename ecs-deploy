@@ -5,6 +5,7 @@ VERSION="3.4.0"
 CLUSTER=false
 SERVICE=false
 TASK_DEFINITION=false
+USE_LATEST_TASK_DEFINITION=true
 MAX_DEFINITIONS=0
 AWS_ASSUME_ROLE=false
 IMAGE=false
@@ -265,8 +266,10 @@ function parseImageName() {
 
 function getCurrentTaskDefinition() {
     if [ $SERVICE != false ]; then
-      # Get current task definition name from service
       TASK_DEFINITION_ARN=`$AWS_ECS describe-services --services $SERVICE --cluster $CLUSTER | jq -r .services[0].taskDefinition`
+      if [ $USE_LATEST_TASK_DEFINITION != false ]; then
+        TASK_DEFINITION_ARN=${TASK_DEFINITION_ARN%:*}
+      fi
       TASK_DEFINITION=`$AWS_ECS describe-task-definition --task-def $TASK_DEFINITION_ARN`
     fi
 }
