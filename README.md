@@ -8,6 +8,10 @@ This script uses the Task Definition and Service entities in Amazon's ECS to ins
 Usage
 -----
 
+    One of the following is required:
+        -n | --service-name     Name of service to deploy
+        -d | --task-definition  Name of task definition to deploy
+
     Required arguments:
         -k | --aws-access-key         AWS Access Key ID. May also be set as environment variable AWS_ACCESS_KEY_ID
         -s | --aws-secret-key         AWS Secret Access Key. May also be set as environment variable AWS_SECRET_ACCESS_KEY
@@ -22,22 +26,31 @@ Usage
                                                 silintl/mariadb:latest, private.registry.com:8000/repo/image:tag
 
     Optional arguments:
-        -a | --assume-role            ARN for AWS Role to assume for ecs-deploy operations.
+        -a | --aws-assume-role        ARN for AWS Role to assume for ecs-deploy operations.
         -D | --desired-count          The number of instantiations of the task to place and keep running in your service.
         -m | --min                    minumumHealthyPercent: The lower limit on the number of running tasks during a deployment. (default: 100)
         -M | --max                    maximumPercent: The upper limit on the number of running tasks during a deployment. (default: 200)
         -t | --timeout                Default is 90s. Script monitors ECS Service for new task definition to be running.
         -e | --tag-env-var            Get image tag name from environment variable. If provided this will override value specified in image name argument.
+        -to | --tag-only              New tag to apply to all images defined in the task (multi-container task). If provided this will override value specified in image name argument.
         --max-definitions             Number of Task Definition Revisions to persist before deregistering oldest revisions.
                                       Note: This number must be 1 or higher (i.e. keep only the current revision ACTIVE).
                                             Max definitions causes all task revisions not matching criteria to be deregistered, even if they're created manually.
                                             Script will only perform deregistration if deployment succeeds.
         --enable-rollback             Rollback task definition if new version is not running before TIMEOUT
+        --use-latest-task-def         Will use the most recently created task definition as it's base, rather than the last used.
+        --force-new-deployment        Force a new deployment of the service. Default is false.
+        --skip-deployments-check      Skip deployments check for services that take too long to drain old tasks
+        --run-task                    Run created task now. If you set this, service-name are not needed.
         -v | --verbose                Verbose output
              --version                Display the version
 
+    Requirements:
+        aws:  AWS Command Line Interface
+        jq:   Command-line JSON processor
+
     Examples:
-      Simple (Using env vars for AWS settings):
+      Simple deployment of a service (Using env vars for AWS settings):
 
         ecs-deploy -c production1 -n doorman-service -i docker.repo.com/doorman:latest
 
@@ -45,9 +58,17 @@ Usage
 
         ecs-deploy -k ABC123 -s SECRETKEY -r us-east-1 -c production1 -n doorman-service -i docker.repo.com/doorman -m 50 -M 100 -t 240 -D 2 -e CI_TIMESTAMP -v
 
-        Using profiles (for STS delegated credentials, for instance):
+      Updating a task definition with a new image:
 
-        ecs-deploy -p PROFILE -c production1 -n doorman-service -i docker.repo.com/doorman -m 50 -M 100 -t 240 -e CI_TIMESTAMP -v
+        ecs-deploy -d open-door-task -i docker.repo.com/doorman:17
+
+      Using profiles (for STS delegated credentials, for instance):
+
+        ecs-deploy -p PROFILE -c production1 -n doorman-service -i docker.repo.com/doorman -t 240 -e CI_TIMESTAMP -v
+
+      Update just the tag on whatever image is found in ECS Task (supports multi-container tasks):
+
+        ecs-deploy -c staging -n core-service -to 0.1.899 -i ignore
 
     Notes:
       - If a tag is not found in image and an ENV var is not used via -e, it will default the tag to "latest"
@@ -59,7 +80,7 @@ Installation
 * Install [jq](https://github.com/stedolan/jq/wiki/Installation)
 * Install ecs-deploy:
 ```
-curl https://raw.githubusercontent.com/silinternational/ecs-deploy/master/ecs-deploy | sudo tee -a /usr/bin/ecs-deploy
+curl https://raw.githubusercontent.com/silinternational/ecs-deploy/master/ecs-deploy | sudo tee /usr/bin/ecs-deploy
 sudo chmod +x /usr/bin/ecs-deploy
 
 ```
@@ -94,7 +115,7 @@ _Naturally, enough computing resources must be available in the ECS cluster for 
 Consequently, all that is needed to deploy a new version of an application is to update the Service which is running its
 Tasks to point at a new version of the Task Definition. `ecs-deploy` uses the python `aws` utility to do this. It,
 
-  * Pulls the JSON representation of the in-use Task Definition
+  * Pulls the JSON representation of the in-use Task Definition; or the most recently created if using `--use-latest-task-def`
   * Edits it
   * Defines a new version, with the changes
   * Updates the Service to use the new version
@@ -196,3 +217,33 @@ AWS APIs to perform actions. So for now any parsing/processing of data locally
 is tested.
 
 Any new functionality and pull requests should come with tests as well (if possible).
+
+Github Actions Support
+-------
+Github Actions support is available.  Add a code block similar to that below to your actions yaml file.  Parameters are passed to the ecs-deploy tool under 'with' section. For each parameter, the parameter name followed by _cmd must be called with the appropriate parameter option like '--aws-access-key' in addition to supplying the parameter aws_access_key with the appropriate value.
+```
+deploy_to_ecs:
+  name: 'Deploy updated container image via blue/green deployment to ECS service.'
+  runs-on: ubuntu-18.04
+  steps:
+  - uses: silinternational/ecs-deploy@master
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: 'us-east-1'
+    with:
+      aws_access_key_cmd: '--aws-access-key'
+      aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws_secret_key_cmd: '--aws-secret-key'
+      aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      cluster_cmd: '--cluster'
+      cluster: 'cluster-name'
+      image_cmd: '--image'
+      image: '{amazon_id}.dkr.ecr.us-east-1.amazonaws.com/cluster-name/image_name:latest'
+      region_cmd: '--region'
+      region: 'us-east-1'
+      service_name_cmd: '--service-name'
+      service_name: 'aws-service-name'
+      timeout_cmd: '--timeout'
+      timeout: '360'
+```
